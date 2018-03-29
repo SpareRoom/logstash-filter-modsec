@@ -9,7 +9,7 @@ class LogStash::Filters::Modsec < LogStash::Filters::Base
 	config :split_alerts, :validate => :boolean, :default => true
 	config :store_request, :validate => :boolean, :default => false
 	config :store_response, :validate => :boolean, :default => false
-	config :request_headers, :validate => :string, :default => "host,content-length,user-agent,cookie,content-type,origin,refferer"
+	config :request_headers, :validate => :string, :default => "host,content-length,user-agent,cookie,content-type,origin,referer"
 	config :response_headers, :validate => :string, :default => "content-length"
 	public
 	def register
@@ -22,7 +22,7 @@ class LogStash::Filters::Modsec < LogStash::Filters::Base
 		if (lines == nil || lines.length < 4)
 		   event.set("parse_errors", event.get("message"))
 		   @logger.error("Unvalid event provided to Modsecurity filter")
-           filter_matched(event)
+		   filter_matched(event)
 		   return
 		end
 
@@ -60,16 +60,15 @@ class LogStash::Filters::Modsec < LogStash::Filters::Base
 			if (line.start_with?("--") && line.end_with?("--"))
 				index = line.rindex('--')  - 1
 				section = line[index, 1]
-				firstLine = true
 				next
 			end
 
 			# Audit log header
-			if section == "A" 
+			if section == "A"
 				match = line.match("\\[(?<timestamp>[^\\]]+)\] (?<transaction>[^\\s]+) (?<ip_src>[^\\s]+) (?<port_src>[^\\s]+) (?<ip_dest>[^\\s]+) (?<port_dest>[^\\s]+).*");
 				timestamp = match[:timestamp];
 				format = "%d/%b/%Y:%H:%M:%S %z"
-                parsed = DateTime.strptime(timestamp, format)
+				parsed = DateTime.strptime(timestamp, format)
 				parsedLogstash = LogStash::Timestamp.at(parsed.strftime('%s').to_i)
 				event.set("@timestamp",parsedLogstash)
 				event.set("transactionId", match[:transaction])
@@ -79,7 +78,7 @@ class LogStash::Filters::Modsec < LogStash::Filters::Base
 				event.set("port_dest", match[:port_dest])
 
 			# Request headers
-			elsif section == "B" 
+			elsif section == "B"
 				if firstReqLine
 					match = line.match("(?<method>[^\\s]+) (?<url>([^\\?\\s])+)(?<query>[^\\s]+)? (?<version>[^\\s]+).*");
 					firstReqLine = false
@@ -94,30 +93,52 @@ class LogStash::Filters::Modsec < LogStash::Filters::Base
 					parseErrors << "REQUEST HEADER: " + line
 					next
 				end
-				
+
 				key = line[0,splitPoint].downcase
 				value = line[(splitPoint + 2)..line.length]
 				if (requestHeaders.include? key)
 					if key == "cookie"
 					  event.set("request_" + key, value.split("; "))
-				    else
+					else
 					  event.set("request_" + key, value)
 					end
 				end
-			
+
 			# Audit log trailer
-			elsif section == "H" 
+			elsif section == "H"
 				splitPoint = line.index(": ");
 				key = line[0,splitPoint].downcase
 				value = line[(splitPoint + 2)..line.length]
 				if key == "action"
-					event.set("action_2",value) 
+					event.set("action_2",value)
 				end
+
+				if key == "engine-mode"
+					event.set("engine_mode", value.gsub!(/\A"|"\Z/, ''))
+				end
+
+				if key == "stopwatch2"
+					match = value.match(/\d+ \d+; combined=(?<combined>\d+), p1=(?<p1>\d+), p2=(?<p2>\d+), p3=(?<p3>\d+), p4=(?<p4>\d+), p5=(?<p5>\d+), sr=(?<sr>\d+), sw=(?<sw>\d+), l=(?<l>\d+), gc=(?<gc>\d+)/)
+					if !match.nil?
+						event.set("stopwatch", {
+							"combined" => match[:combined].to_i,
+							"p1"	   => match[:p1].to_i,
+							"p2"	   => match[:p2].to_i,
+							"p3"	   => match[:p3].to_i,
+							"p4"	   => match[:p4].to_i,
+							"p5"	   => match[:p5].to_i,
+							"sr"	   => match[:sr].to_i,
+							"l"		   => match[:l].to_i,
+							"gc"	   => match[:gc].to_i
+						})
+					end
+				end
+
 				if key == "message"
-					match = value.match("(?<action>(?!file).+)\\[file \"(?<rulefile>[^\"]+)\"\\] \\[line \"(?<ruleline>\\d+)\"\\] \\[id \"(?<ruleid>\\d+)\"\\] (\\[rev \"(?<rev>\\d+)\"\\] )?\\[msg \"(?<msg>[^\"]+)\"\\] (\\[data \"(?<data>[^\"]+)\"\\] )?(\\[severity \"(?<severity>[^\"]+)\"\\] )?(\\[ver \"(?<ver>[^\"]+)\"\\] )?(\\[maturity \"(?<maturity>\\d+)\"\\] )?(\\[accuracy \"(?<accuracy>\\d+)\"\\] )?.*") 
+					match = value.match("(?<action>(?!file).+)\\[file \"(?<rulefile>[^\"]+)\"\\] \\[line \"(?<ruleline>\\d+)\"\\] \\[id \"(?<ruleid>\\d+)\"\\] (\\[rev \"(?<rev>\\d+)\"\\] )?\\[msg \"(?<msg>[^\"]+)\"\\] (\\[data \"(?<data>[^\"]+)\"\\] )?(\\[severity \"(?<severity>[^\"]+)\"\\] )?(\\[ver \"(?<ver>[^\"]+)\"\\] )?(\\[maturity \"(?<maturity>\\d+)\"\\] )?(\\[accuracy \"(?<accuracy>\\d+)\"\\] )?.*")
 					if match == nil
 					  @logger.warn("Modsecurity filter: unable to match alert message.")
-                      parseErrors << "MESSAGE: " + value
+					  parseErrors << "MESSAGE: " + value
 					  next
 					end
 					begin
@@ -133,11 +154,11 @@ class LogStash::Filters::Modsec < LogStash::Filters::Base
 						alert[:version] = match[:ver]
 						alert[:maturity] = match[:maturity]
 						alert[:accuracy] = match[:accuracy]
-	
+
 						#Parse tags
 						alert_tags = []
 						tagStart = 0;
-						begin # Catch max tag limit reached 
+						begin # Catch max tag limit reached
 							while (tagStart = value.index('[tag "', tagStart)) != nil
 								tagEnd = value.index('"]', tagStart)
 								alert_tags << value[(tagStart + 6)...tagEnd]
@@ -158,7 +179,7 @@ class LogStash::Filters::Modsec < LogStash::Filters::Base
 								alertsAlert << alert
 							elsif severityLower == "critical"
 								alertCountCritital += 1
-								alertsCritical << alert					
+								alertsCritical << alert
 							elsif severityLower == "error"
 								alertCountError += 1
 								alertsError << alert
@@ -170,7 +191,7 @@ class LogStash::Filters::Modsec < LogStash::Filters::Base
 							end
 						else
 							alertsOther << alert
-						end	
+						end
 					rescue => exception
 						  @logger.warn("Modsecurity filter: unable to match alert message.")
 						  parseErrors << "MESSAGE_EXCEPTION: " + value + "\n\n"
@@ -178,8 +199,8 @@ class LogStash::Filters::Modsec < LogStash::Filters::Base
 				end
 
 			# Response headers
-			elsif section == "F" 
-				if firstRespLine 
+			elsif section == "F"
+				if firstRespLine
 					match = line.match("(?<version>[^\\s]+) (?<statuscode>\\d{3}) (?<message>.*).*");
 					firstRespLine = false
 					event.set("http_version", match[:version])
@@ -198,9 +219,9 @@ class LogStash::Filters::Modsec < LogStash::Filters::Base
 					event.set("response_" + key, value)
 				end
 			elsif section == "C" || section == "I" && @store_request # Buffer request body
-				reqBody += line		
+				reqBody += line
 			elsif section == "G" || section == "E" && @store_response # Buffer request body
-				respBody += line	
+				respBody += line
 			end
 		end # end of for
 
@@ -211,11 +232,11 @@ class LogStash::Filters::Modsec < LogStash::Filters::Base
 			event.set("_response_body",respBody);
 		end
 
-        alerts = alertsEmergency + alertsCritical + alertsAlert + alertsError + alertsWarning + alertsOther # Sorted alerts be severity desc
+		alerts = alertsEmergency + alertsCritical + alertsAlert + alertsError + alertsWarning + alertsOther # Sorted alerts be severity desc
 		if alerts.length > 0
 			event.set("alerts_highest_severity",alerts[0][:severity])
 		end
- 
+
 		if @split_alerts
 			alertCount = 0
 			alertsRemaining = []
@@ -223,7 +244,7 @@ class LogStash::Filters::Modsec < LogStash::Filters::Base
 
 				# Max 6 alerts to prevent exceeding max field count
 				if alertCount <= 5
-					event.set("alert_" + alertCount.to_s,alert) 
+					event.set("alert_" + alertCount.to_s,alert)
 				else
 					alertsRemaining << alert
 				end
@@ -245,9 +266,9 @@ class LogStash::Filters::Modsec < LogStash::Filters::Base
 		event.set("alerts_warning",alertCountWarning)
 		event.set("alerts_error",alertCountError)
 
-        if parseErrors.length > 0
+		if parseErrors.length > 0
 			event.set("parse_errors",parseErrors)
-	    end
+		end
 
 		filter_matched(event)
 	end
