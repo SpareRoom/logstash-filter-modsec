@@ -67,6 +67,7 @@ class LogStash::Filters::Modsec < LogStash::Filters::Base
 			if section == "A"
 				match = line.match("\\[(?<timestamp>[^\\]]+)\] (?<transaction>[^\\s]+) (?<ip_src>[^\\s]+) (?<port_src>[^\\s]+) (?<ip_dest>[^\\s]+) (?<port_dest>[^\\s]+).*");
 				timestamp = match[:timestamp];
+				timestamp = timestamp.gsub(/--/, '-')
 				format = "%d/%b/%Y:%H:%M:%S %z"
 				parsed = DateTime.strptime(timestamp, format)
 				parsedLogstash = LogStash::Timestamp.at(parsed.strftime('%s').to_i)
